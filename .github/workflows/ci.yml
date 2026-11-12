@@ -1,0 +1,46 @@
+# .github/workflows/ci.yml in a Python app repo.
+# Same org as the template (hackshieldxs-com):  uses: hackshieldxs-com/ci-templates/...
+# In ourfamily-co:                              uses: ourfamily-co/ci-templates/...
+name: CI
+
+on:
+  push:
+    branches: [ main, dev ]
+  pull_request:
+    branches: [ main, dev ]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ourfamily-co/ci-templates/.github/workflows/python-security-ci.yml@v1
+    with:
+      runner_label:      ourfamily                       # hackshieldxs-com for that org
+      python_version:    "3.12"                          # must exist on the runner (dnf install python3.12)
+      harbor_registry:   security-scanner.int.hackshieldx.com
+      harbor_project:    azurefunction                           # Harbor project (create it + robots first)
+      image_name:        azurefunction
+      sonar_project_key: azurefunction
+      # optional (defaults shown):
+      # working_directory:  .                 # folder with requirements.txt / pyproject.toml
+      # install_command:    ""                # e.g. "pip install -r requirements/prod.txt -r requirements/test.txt"
+      # test_command:       ""                # default: pytest + coverage
+      # pip_audit_blocking: true
+      # pip_audit_ignore:   ""                # e.g. "GHSA-xxxx-xxxx-xxxx"  (temporary exceptions)
+      # bandit_blocking:    true              # HIGH severity + HIGH confidence only
+      # semgrep_blocking:   false
+      # dependency_check:   false             # OWASP DC in addition to pip-audit
+      # deploy_env_main:    ocp_prod
+      # deploy_env_dev:     ocp_dev
+    secrets:
+      HARBOR_USERNAME:     ${{ secrets.HARBOR_USERNAME }}
+      HARBOR_PASSWORD:     ${{ secrets.HARBOR_PASSWORD }}
+      SONAR_TOKEN:         ${{ secrets.SONAR_TOKEN }}
+      NVD_API_KEY:         ${{ secrets.NVD_API_KEY }}
+      HARNESS_WEBHOOK_URL: ${{ secrets.HARNESS_WEBHOOK_URL }}
+      HARNESS_API_KEY:     ${{ secrets.HARNESS_API_KEY }}
