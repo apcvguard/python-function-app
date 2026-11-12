@@ -15,13 +15,13 @@ pipeline:
   variables:
     - name: resource_group
       type: String
-      value: rg-pyfunc                 # CHANGE_ME
+      value: CHANGE_ME                 # resource group of your existing app
     - name: dev_function_app
       type: String
-      value: pyfunc-app-dev            # CHANGE_ME (globally unique)
+      value: CHANGE_ME                 # your existing Function App name
     - name: prod_function_app
       type: String
-      value: pyfunc-app-prod           # CHANGE_ME (globally unique)
+      value: ""                        # optional 2nd app; leave "" to skip approval + prod
   stages:
     # ---------------------------------------------------------------- DEV
     - stage:
@@ -72,6 +72,7 @@ pipeline:
                       apt-get update -qq && apt-get install -y -qq zip >/dev/null
                       rm -rf .python_packages dist && mkdir -p dist
                       pip install -r requirements.txt --target=".python_packages/lib/site-packages"
+                      python -c 'import sys;print("%d.%d"%sys.version_info[:2])' > dist/pyversion
                       zip -qr dist/functionapp.zip . -x@.zipignore
                       ls -lh dist/functionapp.zip
               - step:
@@ -119,7 +120,7 @@ pipeline:
                       disallowPipelineExecutor: false
         when:
           pipelineStatus: Success
-          condition: <+codebase.branch> == "main"
+          condition: <+codebase.branch> == "main" && <+pipeline.variables.prod_function_app> != ""
 
     # ---------------------------------------------------------------- PROD
     # Re-clones the SAME commit (pipeline codebase is pinned per execution) and rebuilds.
@@ -150,6 +151,7 @@ pipeline:
                       apt-get update -qq && apt-get install -y -qq zip >/dev/null
                       rm -rf .python_packages dist && mkdir -p dist
                       pip install -r requirements.txt --target=".python_packages/lib/site-packages"
+                      python -c 'import sys;print("%d.%d"%sys.version_info[:2])' > dist/pyversion
                       zip -qr dist/functionapp.zip . -x@.zipignore
               - step:
                   type: Run
@@ -172,4 +174,4 @@ pipeline:
                       bash scripts/deploy.sh prod
         when:
           pipelineStatus: Success
-          condition: <+codebase.branch> == "main"
+          condition: <+codebase.branch> == "main" && <+pipeline.variables.prod_function_app> != ""
