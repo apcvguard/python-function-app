@@ -1,29 +1,25 @@
-# Harness pipeline: Git -> test -> package -> deploy to Azure Function App (dev) -> approval -> prod
-# Replace every value marked CHANGE_ME, or override at runtime.
 pipeline:
   name: python-function-app
   identifier: python_function_app
-  orgIdentifier: default               # CHANGE_ME
-  projectIdentifier: CHANGE_ME
+  orgIdentifier: default
+  projectIdentifier: ourfamily
   tags: {}
   properties:
     ci:
       codebase:
-        connectorRef: github_connector # Harness Git connector (GitHub/GitLab/Bitbucket/Azure Repos)
-        repoName: python-function-app  # CHANGE_ME (omit if connector is repo-scoped)
+        connectorRef: github_connector
         build: <+input>
   variables:
     - name: resource_group
       type: String
-      value: CHANGE_ME                 # resource group of your existing app
+      value: functiontest_group
     - name: dev_function_app
       type: String
-      value: CHANGE_ME                 # your existing Function App name
+      value: functiontest
     - name: prod_function_app
       type: String
-      value: ""                        # optional 2nd app; leave "" to skip approval + prod
+      value: ""
   stages:
-    # ---------------------------------------------------------------- DEV
     - stage:
         name: Build Test Deploy Dev
         identifier: build_test_deploy_dev
@@ -38,7 +34,7 @@ pipeline:
             os: Linux
             arch: Amd64
           runtime:
-            type: Cloud                # Harness Cloud; swap for KubernetesDirect/Docker if self-hosted
+            type: Cloud
             spec: {}
           execution:
             steps:
@@ -47,7 +43,7 @@ pipeline:
                   name: Unit Tests
                   identifier: unit_tests
                   spec:
-                    connectorRef: docker_hub   # Docker registry connector
+                    connectorRef: docker_hub
                     image: python:3.11-slim
                     shell: Sh
                     command: |
@@ -65,7 +61,7 @@ pipeline:
                   identifier: package
                   spec:
                     connectorRef: docker_hub
-                    image: python:3.11-slim    # must match the Function App's Python version
+                    image: python:3.11-slim
                     shell: Sh
                     command: |
                       set -e
@@ -96,8 +92,6 @@ pipeline:
                       bash scripts/deploy.sh dev
           sharedPaths:
             - /root/.cache/pip
-
-    # ---------------------------------------------------------------- APPROVAL
     - stage:
         name: Approve Prod
         identifier: approve_prod
@@ -115,15 +109,12 @@ pipeline:
                     includePipelineExecutionHistory: true
                     approvers:
                       userGroups:
-                        - _project_all_users   # CHANGE_ME to a release-approvers group
+                        - _project_all_users
                       minimumCount: 1
                       disallowPipelineExecutor: false
         when:
           pipelineStatus: Success
           condition: <+codebase.branch> == "main" && <+pipeline.variables.prod_function_app> != ""
-
-    # ---------------------------------------------------------------- PROD
-    # Re-clones the SAME commit (pipeline codebase is pinned per execution) and rebuilds.
     - stage:
         name: Deploy Prod
         identifier: deploy_prod
