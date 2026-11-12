@@ -1,0 +1,33 @@
+# Harness trigger: run the pipeline on every push to main (and on PRs for test-only feedback).
+trigger:
+  name: on-push-main
+  identifier: on_push_main
+  enabled: true
+  orgIdentifier: default        # CHANGE_ME
+  projectIdentifier: CHANGE_ME
+  pipelineIdentifier: python_function_app
+  source:
+    type: Webhook
+    spec:
+      type: Github              # Github | Gitlab | Bitbucket | AzureRepo
+      spec:
+        type: Push
+        spec:
+          connectorRef: github_connector
+          autoAbortPreviousExecutions: true
+          payloadConditions:
+            - key: targetBranch
+              operator: Equals
+              value: main
+          headerConditions: []
+          actions: []
+  inputYaml: |
+    pipeline:
+      identifier: python_function_app
+      properties:
+        ci:
+          codebase:
+            build:
+              type: branch
+              spec:
+                branch: <+trigger.branch>

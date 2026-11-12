@@ -1,0 +1,175 @@
+# Harness pipeline: Git -> test -> package -> deploy to Azure Function App (dev) -> approval -> prod
+# Replace every value marked CHANGE_ME, or override at runtime.
+pipeline:
+  name: python-function-app
+  identifier: python_function_app
+  orgIdentifier: default               # CHANGE_ME
+  projectIdentifier: CHANGE_ME
+  tags: {}
+  properties:
+    ci:
+      codebase:
+        connectorRef: github_connector # Harness Git connector (GitHub/GitLab/Bitbucket/Azure Repos)
+        repoName: python-function-app  # CHANGE_ME (omit if connector is repo-scoped)
+        build: <+input>
+  variables:
+    - name: resource_group
+      type: String
+      value: rg-pyfunc                 # CHANGE_ME
+    - name: dev_function_app
+      type: String
+      value: pyfunc-app-dev            # CHANGE_ME (globally unique)
+    - name: prod_function_app
+      type: String
+      value: pyfunc-app-prod           # CHANGE_ME (globally unique)
+  stages:
+    # ---------------------------------------------------------------- DEV
+    - stage:
+        name: Build Test Deploy Dev
+        identifier: build_test_deploy_dev
+        type: CI
+        spec:
+          cloneCodebase: true
+          caching:
+            enabled: true
+            paths:
+              - /root/.cache/pip
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud                # Harness Cloud; swap for KubernetesDirect/Docker if self-hosted
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Unit Tests
+                  identifier: unit_tests
+                  spec:
+                    connectorRef: docker_hub   # Docker registry connector
+                    image: python:3.11-slim
+                    shell: Sh
+                    command: |
+                      set -e
+                      pip install -r requirements-dev.txt
+                      python -m pytest -q --junitxml=reports/junit.xml
+                    reports:
+                      type: JUnit
+                      spec:
+                        paths:
+                          - reports/junit.xml
+              - step:
+                  type: Run
+                  name: Package
+                  identifier: package
+                  spec:
+                    connectorRef: docker_hub
+                    image: python:3.11-slim    # must match the Function App's Python version
+                    shell: Sh
+                    command: |
+                      set -e
+                      apt-get update -qq && apt-get install -y -qq zip >/dev/null
+                      rm -rf .python_packages dist && mkdir -p dist
+                      pip install -r requirements.txt --target=".python_packages/lib/site-packages"
+                      zip -qr dist/functionapp.zip . -x@.zipignore
+                      ls -lh dist/functionapp.zip
+              - step:
+                  type: Run
+                  name: Deploy Dev
+                  identifier: deploy_dev
+                  spec:
+                    connectorRef: docker_hub
+                    image: mcr.microsoft.com/azure-cli:latest
+                    shell: Bash
+                    envVariables:
+                      AZURE_CLIENT_ID: <+secrets.getValue("azure_client_id")>
+                      AZURE_CLIENT_SECRET: <+secrets.getValue("azure_client_secret")>
+                      AZURE_TENANT_ID: <+secrets.getValue("azure_tenant_id")>
+                      AZURE_SUBSCRIPTION_ID: <+secrets.getValue("azure_subscription_id")>
+                      RG: <+pipeline.variables.resource_group>
+                      APP: <+pipeline.variables.dev_function_app>
+                      APP_VERSION: <+codebase.shortCommitSha>
+                    command: |
+                      set -euo pipefail
+                      bash scripts/deploy.sh dev
+          sharedPaths:
+            - /root/.cache/pip
+
+    # ---------------------------------------------------------------- APPROVAL
+    - stage:
+        name: Approve Prod
+        identifier: approve_prod
+        type: Approval
+        spec:
+          execution:
+            steps:
+              - step:
+                  type: HarnessApproval
+                  name: Prod Approval
+                  identifier: prod_approval
+                  timeout: 1d
+                  spec:
+                    approvalMessage: Dev deploy of <+codebase.shortCommitSha> passed. Promote to prod?
+                    includePipelineExecutionHistory: true
+                    approvers:
+                      userGroups:
+                        - _project_all_users   # CHANGE_ME to a release-approvers group
+                      minimumCount: 1
+                      disallowPipelineExecutor: false
+        when:
+          pipelineStatus: Success
+          condition: <+codebase.branch> == "main"
+
+    # ---------------------------------------------------------------- PROD
+    # Re-clones the SAME commit (pipeline codebase is pinned per execution) and rebuilds.
+    - stage:
+        name: Deploy Prod
+        identifier: deploy_prod
+        type: CI
+        spec:
+          cloneCodebase: true
+          platform:
+            os: Linux
+            arch: Amd64
+          runtime:
+            type: Cloud
+            spec: {}
+          execution:
+            steps:
+              - step:
+                  type: Run
+                  name: Package
+                  identifier: package_prod
+                  spec:
+                    connectorRef: docker_hub
+                    image: python:3.11-slim
+                    shell: Sh
+                    command: |
+                      set -e
+                      apt-get update -qq && apt-get install -y -qq zip >/dev/null
+                      rm -rf .python_packages dist && mkdir -p dist
+                      pip install -r requirements.txt --target=".python_packages/lib/site-packages"
+                      zip -qr dist/functionapp.zip . -x@.zipignore
+              - step:
+                  type: Run
+                  name: Deploy Prod
+                  identifier: deploy_prod_step
+                  spec:
+                    connectorRef: docker_hub
+                    image: mcr.microsoft.com/azure-cli:latest
+                    shell: Bash
+                    envVariables:
+                      AZURE_CLIENT_ID: <+secrets.getValue("azure_client_id")>
+                      AZURE_CLIENT_SECRET: <+secrets.getValue("azure_client_secret")>
+                      AZURE_TENANT_ID: <+secrets.getValue("azure_tenant_id")>
+                      AZURE_SUBSCRIPTION_ID: <+secrets.getValue("azure_subscription_id")>
+                      RG: <+pipeline.variables.resource_group>
+                      APP: <+pipeline.variables.prod_function_app>
+                      APP_VERSION: <+codebase.shortCommitSha>
+                    command: |
+                      set -euo pipefail
+                      bash scripts/deploy.sh prod
+        when:
+          pipelineStatus: Success
+          condition: <+codebase.branch> == "main"
